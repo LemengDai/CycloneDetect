@@ -4,7 +4,7 @@
 # In[4]:
 
 
-get_ipython().system('pip3 install torch torchvision torchmetrics')
+# get_ipython().system('pip3 install torch torchvision torchmetrics')
 
 
 # In[5]:
@@ -247,7 +247,7 @@ class Seq2Seq(nn.Module):
 # In[12]:
 
 
-model2 = Seq2Seq(input_dim=INPUT_DIM, output_dim=OUTPUT_DIM,kernel_size=(3, 3), num_layers=2).
+model2 = Seq2Seq(input_dim=INPUT_DIM, output_dim=OUTPUT_DIM,kernel_size=(3, 3), num_layers=2)
 
 
 # In[13]:
@@ -411,16 +411,17 @@ print(model)
 
 
 image_train = np.load("data/hurricane_image_train.npy")
-image_train = image_train[:, :, :, :, :, 1:4]
 label_train = np.load("data/hurricane_label_train.npy")
-
+print(image_train.shape)
+print(label_train.shape)
 
 # In[ ]:
 
 
-image_train = np.reshape(image_train, (image_train.shape[0]*image_train.shape[1], 10, 128, 257, 3))
+image_train = np.reshape(image_train, (image_train.shape[0]*image_train.shape[1], 10, 128, 257, 6))
 label_train = np.reshape(label_train, (label_train.shape[0]*label_train.shape[1], 10, 128, 257, 1))
-
+print(image_train.shape)
+print(label_train.shape)
 
 # In[ ]:
 
@@ -524,7 +525,7 @@ class ClimateImageDataset(Dataset):
         return len(self.ds_labels)
 
     def __getitem__(self, idx):
-        image = self.dataset[idx]
+        image = self.dataset[idx, :, :, :, 1:4]
         label = self.ds_labels[idx]
         if self.transform:
             image = self.transform(image)
@@ -690,7 +691,7 @@ def test_loop(dataloader, model, loss_fn, epoch, writer, func):
 # In[28]:
 
 
-get_ipython().run_line_magic('pip', 'install tensorboard')
+# get_ipython().run_line_magic('pip', 'install tensorboard')
 
 
 # In[28]:
