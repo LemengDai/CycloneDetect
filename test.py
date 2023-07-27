@@ -75,7 +75,7 @@ class ConvLSTMCell(nn.Module):
     
     def init_hidden(self, batch_size, image_size):
         height, width = image_size
-        return (torch.zeros(batch_size, self.hidden_dim, height, width, device=self.conv.weight.device), torch.zeros(batch_size, self.hidden_dim, height, width, device=self.conv.weight.device))
+        return (torch.zeros(batch_size, self.hidden_dim, width, height, device=self.conv.weight.device), torch.zeros(batch_size, self.hidden_dim, width, height, device=self.conv.weight.device))
 
 
 # In[8]:
@@ -135,7 +135,6 @@ class ConvLSTM(nn.Module):
         ----------
         input_tensor:
             5-D Tensor either of shape (t, b, w, h, c) or (b, t, w, h, c)
-        hidden_state: 
 
         Returns
         -------
@@ -143,8 +142,10 @@ class ConvLSTM(nn.Module):
         """
         if not self.batch_first:
             input_tensor = input_tensor.permute(1, 0, 2, 3, 4)
-            
-        b,_,w,h,_ = input_tensor.size()
+        
+        # reshape the input tensor into (b, t, c, w, h)
+        input_tensor = input_tensor.permute(0, 1, 4, 2, 3)
+        b,_,_,w,h = input_tensor.size()
         
         if hidden_state is None:
             hidden_state = self._init_hidden(batch_size=b, image_size=(h, w))
@@ -197,7 +198,7 @@ class ConvLSTM(nn.Module):
 # In[9]:
 
 
-INPUT_DIM = 6
+INPUT_DIM = 3
 OUTPUT_DIM = 1
 BATCH_SIZE = 16
 kernel_size = (3, 3)
@@ -409,17 +410,18 @@ print(model)
 
 # In[20]:
 
+label_train = np.load("data/hurricane_label_train.npy")
+print(label_train.shape)
 
 image_train = np.load("data/hurricane_image_train.npy")
-label_train = np.load("data/hurricane_label_train.npy")
 print(image_train.shape)
-print(label_train.shape)
 
 # In[ ]:
 
 
 image_train = np.reshape(image_train, (image_train.shape[0]*image_train.shape[1], 10, 128, 257, 6))
 label_train = np.reshape(label_train, (label_train.shape[0]*label_train.shape[1], 10, 128, 257, 1))
+
 print(image_train.shape)
 print(label_train.shape)
 
@@ -435,13 +437,6 @@ label_test = np.load("data/hurricane_label_test.npy")
 
 image_test = np.reshape(image_test, (image_test.shape[0]*image_test.shape[1], 10, 128, 257, 3))
 label_test = np.reshape(label_test, (label_test.shape[0]*label_test.shape[1], 10, 128, 257, 1))
-
-
-# In[ ]:
-
-
-print(image_train.shape)
-print(label_train.shape)
 
 
 # In[ ]:
@@ -478,7 +473,7 @@ parser.add_argument('--init_method', default='tcp://127.0.0.1:3456', type=str, h
 parser.add_argument('--dist_backend', default='gloo', type=str, help='')
 parser.add_argument('--world_size', default=1, type=int, help='')
 parser.add_argument('--distributed', action='store_true', help='')
-args = parser.parse_args
+args = parser.parse_args()
 
 
 # In[29]:
@@ -515,17 +510,21 @@ test_sampler = DistributedSampler(image_test)
 
 
 class ClimateImageDataset(Dataset):
-    def __init__(self, dataset, labels, transform=None, target_transform=None):
+    def __init__(self, dataset, labels, transform=None, target_transform=None, test=False):
         self.ds_labels = labels
         self.dataset = dataset
         self.transform = transform
         self.target_transform = target_transform
+        self.test = test
 
     def __len__(self):
         return len(self.ds_labels)
 
     def __getitem__(self, idx):
-        image = self.dataset[idx, :, :, :, 1:4]
+        if self.test:
+            image = self.dataset[idx]
+        else:
+            image = self.dataset[idx, :, :, :, 1:4]
         label = self.ds_labels[idx]
         if self.transform:
             image = self.transform(image)
@@ -537,8 +536,8 @@ class ClimateImageDataset(Dataset):
 # In[ ]:
 
 
-training_data = ClimateImageDataset(image_train, image_test)
-test_data = ClimateImageDataset(image_test, label_test)
+training_data = ClimateImageDataset(image_train, label_train)
+test_data = ClimateImageDataset(image_test, label_test, test=True)
 train_dataloader = DataLoader(training_data, batch_size=BATCH_SIZE, shuffle=(train_sampler is None), sampler=train_sampler)
 test_dataloader = DataLoader(test_data, batch_size=BATCH_SIZE, shuffle=(test_sampler is None), sampler=test_sampler)
 
@@ -628,6 +627,7 @@ class TverskyLoss(nn.Module):
 
 # In[30]:
 
+from torch import tensor
 
 def train_loop(dataloader, model, loss_fn, optimizer, epoch, writer):
     size = len(dataloader.dataset)
@@ -638,7 +638,8 @@ def train_loop(dataloader, model, loss_fn, optimizer, epoch, writer):
         input = input.cuda()
         target = target.cuda()
 
-        pred = model(input)
+        [pred], _ = model(input)
+        pred = pred.permute(0, 1, 3, 4, 2)
         loss = loss_fn(pred, target)
         
         optimizer.zero_grad()
@@ -665,17 +666,24 @@ def test_loop(dataloader, model, loss_fn, epoch, writer, func):
     model.eval()
     size = len(dataloader.dataset)
     num_batches = len(dataloader)
-    test_loss, correct = 0
-    preds = []
-    targets = []
+    test_loss = 0
+    correct = 0
+    preds = torch.empty((size, 10, 128, 257, OUTPUT_DIM)).cuda()
+    targets = torch.empty((size, 10, 128, 257, OUTPUT_DIM)).cuda()
     
     with torch.no_grad():
         for batch, (input, target) in enumerate(dataloader):
-            pred = model(input)
+            
+            input = input.cuda()
+            target = target.cuda()
+
+            [pred], _ = model(input)
+            pred = pred.permute(0, 1, 3, 4, 2)
             loss = loss_fn(pred, target).item()
             test_loss += loss
-            preds.append(pred)
-            targets.append(target)
+
+            preds = torch.cat((preds, pred), dim=0)
+            targets = torch.cat((targets, target), dim=0)
             writer.add_scalar('testing loss', loss, epoch * len(dataloader) + batch + 1)
     test_loss = test_loss / num_batches
     
@@ -683,6 +691,9 @@ def test_loop(dataloader, model, loss_fn, epoch, writer, func):
         metric = func(average="micro")
     else:
         metric = func(task="binary")
+    
+    metric.cuda()
+    targets = targets.to(torch.int64)
     score = metric(preds, targets)
     print(f"Test Error: \n : {metric.__class__.__name__}: {score:.3f}, Avg loss: {test_loss:>8f} \n")
     
@@ -700,7 +711,6 @@ def test_loop(dataloader, model, loss_fn, epoch, writer, func):
 from torch.utils.tensorboard import SummaryWriter
 import torchmetrics
 from torchmetrics.classification import Dice, Recall, Specificity, Accuracy, Precision, JaccardIndex, AveragePrecision
-from torch import tensor
 writer = SummaryWriter()
 
 for t in range(epochs):
