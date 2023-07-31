@@ -241,7 +241,7 @@ class Seq2Seq(nn.Module):
     def forward(self, input_tensor):
         output = self.sequential(input_tensor)
         output = self.conv(output[:,:,-1])
-        return nn.Sigmoid()(output)
+        return nn.Sigmoid(output)
         
 
 
@@ -465,8 +465,8 @@ import argparse
 
 parser = argparse.ArgumentParser(description='Tropical Cyclone Detection Model Training')
 parser.add_argument('--lr', default=0.1, help='')
-parser.add_argument('--batch_size', type=int, default=768, help='')
-parser.add_argument('--max_epochs', type=int, default=4, help='')
+parser.add_argument('--batch_size', type=int, default=16, help='')
+parser.add_argument('--max_epochs', type=int, default=5, help='')
 parser.add_argument('--num_workers', type=int, default=0, help='')
 
 parser.add_argument('--init_method', default='tcp://127.0.0.1:3456', type=str, help='')
@@ -654,12 +654,6 @@ def train_loop(dataloader, model, loss_fn, optimizer, epoch, writer):
                             running_loss / 10,
                             epoch * len(dataloader) + batch + 1)
             running_loss = 0
-            
-            #save model at each checkpoint
-            ckp = model.module.state_dict()
-            PATH = "checkpoint.pt"
-            torch.save(ckp, PATH)
-            print(f"Epoch {epoch} | Training checkpoint saved at {PATH}")
         
         
 def test_loop(dataloader, model, loss_fn, epoch, writer, func):
@@ -693,10 +687,11 @@ def test_loop(dataloader, model, loss_fn, epoch, writer, func):
         metric = func(task="binary")
     
     metric.cuda()
+    total_loss = loss_fn(preds, targets).item()
     targets = targets.to(torch.int64)
     score = metric(preds, targets)
-    print(f"Test Error: \n : {metric.__class__.__name__}: {score:.3f}, Avg loss: {test_loss:>8f} \n")
-    
+    print(f"Test Error: \n : {metric.__class__.__name__}: {score:.5f}, Avg loss: {test_loss:>8f} \n")
+    print(f"Total Loss: {total_loss:>8f}\n")
 
 
 # In[28]:
@@ -717,8 +712,15 @@ for t in range(epochs):
     print(f"Epoch {t+1}\n-------------------------------")
     train_sampler.set_epoch(t)
     train_loop(train_dataloader, model, loss_fn, optimizer, t+1, writer)
+
+    #save model at each checkpoint
+    ckp = model.module.state_dict()
+    PATH = "checkpoint.pt"
+    torch.save(ckp, PATH)
+    print(f"Epoch {t+1} | Training checkpoint saved at {PATH}")
+    
     test_sampler.set_epoch(t)
-    test_loop(test_dataloader, model, loss_fn, t+1, writer, Dice)
+    test_loop(test_dataloader, model, loss_fn, t+1, writer, JaccardIndex)
 
 destroy_process_group()
 print("Done")
@@ -745,31 +747,3 @@ def iou_pytorch(outputs: torch.Tensor, labels: torch.Tensor):
     thresholded = torch.clamp(20 * (iou - 0.5), 0, 10).ceil() / 10  # This is equal to comparing with thresolds
     
     return thresholded  # Or thresholded.mean() if you are interested in average across the batch
-    
-
-
-# In[30]:
-
-
-# target = tensor([0, 1, 0, 1, 0, 1])
-# preds = tensor([0, 0, 1, 1, 0, 1])
-# preds = preds.to(torch.float32)
-
-# dice = Dice(average="micro")
-# precision = Precision(task="binary")
-# accuracy = Accuracy(task="binary")
-# specificity = Specificity(task="binary")
-# recall = Recall(task="binary")
-# average_precision = AveragePrecision(task="binary")
-# jaccard_idx = JaccardIndex(task="binary")
-
-# metrics = [Dice, Recall, Specificity, Accuracy, Precision, JaccardIndex, AveragePrecision]
-
-# for func in metrics:
-#     if func == Dice:
-#         metric = func(average="micro")
-#     else:
-#         metric = func(task="binary")
-#     score = metric(preds, target)
-#     print(f"{metric.__class__.__name__}: {score:.3f}")
-
