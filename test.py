@@ -547,7 +547,7 @@ test_dataloader = DataLoader(test_data, batch_size=BATCH_SIZE, shuffle=(test_sam
 
 learning_rate = 1e-3
 epochs = 5
-loss_fn = nn.CrossEntropyLoss().cuda()
+loss_fn = nn.MSELoss().cuda()
 optimizer = Adam(model.parameters(), lr=learning_rate)
 
 
@@ -662,8 +662,8 @@ def test_loop(dataloader, model, loss_fn, epoch, writer, func):
     num_batches = len(dataloader)
     test_loss = 0
     correct = 0
-    preds = torch.empty((size, 10, 128, 257, OUTPUT_DIM)).cuda()
-    targets = torch.empty((size, 10, 128, 257, OUTPUT_DIM)).cuda()
+    preds = []
+    targets = []
     
     with torch.no_grad():
         for batch, (input, target) in enumerate(dataloader):
@@ -673,13 +673,18 @@ def test_loop(dataloader, model, loss_fn, epoch, writer, func):
 
             [pred], _ = model(input)
             pred = pred.permute(0, 1, 3, 4, 2)
+            
             loss = loss_fn(pred, target).item()
             test_loss += loss
 
-            preds = torch.cat((preds, pred), dim=0)
-            targets = torch.cat((targets, target), dim=0)
+            preds.append(pred)
+            targets.append(target)
             writer.add_scalar('testing loss', loss, epoch * len(dataloader) + batch + 1)
+    
     test_loss = test_loss / num_batches
+    
+    preds = torch.cat(preds, axis=0).cuda()
+    targets = torch.cat(targets, axis=0).cuda()
     
     if func == Dice:
         metric = func(average="micro")
