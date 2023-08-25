@@ -171,10 +171,10 @@ class ConvLSTM(nn.Module):
             
         # give the last layer
         if not self.return_all_layers:
-            layer_output_list = layer_output_list[-1:]
+            layer_output_list = layer_output_list[-1]
             last_state_list = last_state_list[-1:]
         
-        return layer_output_list, last_state_list
+        return layer_output_list
     
     def _init_hidden(self, batch_size, image_size):
         init_states = []
@@ -200,7 +200,7 @@ class ConvLSTM(nn.Module):
 
 INPUT_DIM = 3
 OUTPUT_DIM = 1
-BATCH_SIZE = 24
+BATCH_SIZE = 16
 kernel_size = (5, 5)
 # device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
 # print(f"Using {device} device")
@@ -211,7 +211,7 @@ kernel_size = (5, 5)
 
 model1 = ConvLSTM(input_dim=INPUT_DIM,
                  hidden_dim=[6, 12, OUTPUT_DIM],
-                 kernel_size=kernel_size,
+                 kernel_size=(3, 3),
                  num_layers=3,
                  batch_first=True,
                  bias=True,
@@ -226,7 +226,7 @@ class Seq2Seq(nn.Module):
         super(Seq2Seq, self).__init__()
         self.sequential = nn.Sequential()
         self.sequential.add_module("conlstm1", ConvLSTM(input_dim, 64, kernel_size, 1))
-        self.sequential.add_module("batchnorm1", nn.BatchNorm3d(num_features=output_dim))
+        self.sequential.add_module("batchnorm1", nn.BatchNorm3d(num_features=64))
         
         for i in range(2, num_layers + 1):
             self.sequential.add_module(
@@ -236,7 +236,7 @@ class Seq2Seq(nn.Module):
                 f"batchnorm1{i}", nn.BatchNorm3d(num_features=64)
             )
             
-        self.conv = nn.Conv2d(in_channels=input_dim, out_channels=output_dim, kernel_size=kernel_size)
+        self.conv = nn.Conv2d(in_channels=64, out_channels=output_dim, kernel_size=kernel_size)
         
     def forward(self, input_tensor):
         output = self.sequential(input_tensor)
@@ -248,7 +248,7 @@ class Seq2Seq(nn.Module):
 # In[12]:
 
 
-model2 = Seq2Seq(input_dim=INPUT_DIM, output_dim=OUTPUT_DIM,kernel_size=(3, 3), num_layers=2)
+model2 = Seq2Seq(input_dim=INPUT_DIM, output_dim=OUTPUT_DIM,kernel_size=(5, 5), num_layers=2)
 
 
 # In[13]:
@@ -402,7 +402,7 @@ model3 = EncoderDecoder(encoder, decoder)
 # In[19]:
 
 
-model = model1
+model = model2
 print(model)
 
 
@@ -524,7 +524,7 @@ class ClimateImageDataset(Dataset):
         if self.test:
             image = self.dataset[idx]
         else:
-            image = self.dataset[idx, :, :, :, 0:3]
+            image = self.dataset[idx, :, :, :, 1:4]
         label = self.ds_labels[idx]
         if self.transform:
             image = self.transform(image)
@@ -635,14 +635,13 @@ def train_loop(dataloader, model, loss_fn, optimizer, epoch, writer):
     running_loss = 0
     for batch, (input, target) in enumerate(dataloader):
         
-        input = input.float().cuda()
-        target = target.float().cuda()
+        input = input.cuda()
+        target = target.cuda()
 
-        [pred], _ = model(input)
+        pred = model(input)
         pred = pred.permute(0, 1, 3, 4, 2)
         loss = loss_fn(pred, target)
-        loss = loss.float()
-
+        
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
